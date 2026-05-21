@@ -1,0 +1,173 @@
+{
+  "theme_and_archetype": {
+    "theme": "Light",
+    "archetype": "Soft Utility mixed with Swiss Clarity",
+    "description": "A premium, calming, and highly readable aesthetic designed to build trust for elderly users and caregivers. Focuses on soft blue gradients, deep navy for high-contrast legibility, and energetic lime green for primary actions."
+  },
+  "colors": {
+    "backgrounds": {
+      "app": "linear-gradient(135deg, #F0F7FC 0%, #E0F2FE 100%)",
+      "surface_default": "#FFFFFF",
+      "surface_glass": "rgba(255, 255, 255, 0.6)",
+      "surface_dark": "#0F172A",
+      "emergency_surface": "rgba(239, 68, 68, 0.1)"
+    },
+    "text": {
+      "primary": "#0F172A",
+      "secondary": "#475569",
+      "tertiary": "#94A3B8",
+      "inverse": "#FFFFFF",
+      "emergency": "#B91C1C"
+    },
+    "accents": {
+      "primary": "#0F172A",
+      "cta": "#CCFF00",
+      "cta_hover": "#B3E600",
+      "sos": "#EF4444",
+      "sos_hover": "#DC2626",
+      "info_blue": "#3B82F6",
+      "success_green": "#10B981"
+    },
+    "borders": {
+      "glass": "rgba(255, 255, 255, 0.5)",
+      "subtle": "#E2E8F0"
+    }
+  },
+  "typography": {
+    "font_families": {
+      "headings": "Cabinet Grotesk, sans-serif",
+      "body": "Satoshi, sans-serif",
+      "accent": "Cabinet Grotesk, sans-serif"
+    },
+    "scales": {
+      "h1": "text-5xl md:text-6xl font-black tracking-tight leading-[1.1]",
+      "h2": "text-4xl md:text-5xl font-extrabold tracking-tight leading-tight",
+      "h3": "text-2xl md:text-3xl font-bold tracking-tight leading-snug",
+      "h4": "text-xl font-bold tracking-tight",
+      "body_lg": "text-lg md:text-xl font-medium leading-relaxed text-slate-700",
+      "body": "text-base font-medium leading-relaxed text-slate-600",
+      "small": "text-sm font-semibold tracking-wide uppercase text-slate-500"
+    },
+    "guidelines": [
+      "Headings must use tight letter spacing (tracking-tight).",
+      "Do not use default system fonts like Inter or Roboto.",
+      "Ensure contrast ratio is greater than 4.5:1 for elderly readability.",
+      "Oversized hero typography must maintain a 2-step tailwind jump to subtitles."
+    ]
+  },
+  "spacing_and_layout": {
+    "container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+    "generous_padding": "p-6 md:p-8 lg:p-12",
+    "border_radius": {
+      "card": "rounded-3xl",
+      "chip": "rounded-full",
+      "button": "rounded-full"
+    },
+    "shadows": {
+      "glass": "shadow-[0_8px_32px_rgba(15,23,42,0.04)]",
+      "floating": "shadow-[0_20px_40px_rgba(15,23,42,0.08)]",
+      "glow_cta": "shadow-[0_0_24px_rgba(204,255,0,0.4)]"
+    },
+    "grid_system": {
+      "dashboard": "grid grid-cols-1 md:grid-cols-4 lg:grid-cols-12 gap-6",
+      "bento_marketing": "grid grid-cols-1 md:grid-cols-8 lg:grid-cols-12 gap-8"
+    }
+  },
+  "components": {
+    "glass_card": {
+      "classes": "bg-white/60 backdrop-blur-xl border border-white/50 shadow-[0_8px_32px_rgba(15,23,42,0.04)] rounded-3xl p-6 md:p-8 transition-all duration-300",
+      "hover": "hover:shadow-[0_20px_40px_rgba(15,23,42,0.08)] hover:-translate-y-1 hover:bg-white/80"
+    },
+    "floating_chip": {
+      "classes": "inline-flex items-center gap-2 bg-white/80 backdrop-blur-md border border-white/60 shadow-sm rounded-full px-4 py-2 text-sm font-bold text-slate-800",
+      "hover": "hover:scale-105 transition-transform"
+    },
+    "cta_button": {
+      "classes": "inline-flex items-center justify-center bg-[#CCFF00] text-[#0F172A] font-bold rounded-full px-8 py-4 text-lg shadow-[0_8px_20px_rgba(204,255,0,0.3)] transition-all duration-300",
+      "hover": "hover:bg-[#B3E600] hover:scale-105 hover:shadow-[0_12px_24px_rgba(204,255,0,0.5)]"
+    },
+    "sos_button": {
+      "classes": "inline-flex items-center justify-center bg-red-500 text-white font-bold rounded-full px-8 py-4 text-xl shadow-[0_8px_24px_rgba(239,68,68,0.4)] animate-pulse",
+      "hover": "hover:bg-red-600 hover:scale-105 transition-transform"
+    },
+    "icon_wrapper": {
+      "classes": "h-14 w-14 rounded-2xl bg-gradient-to-br from-white to-slate-50 flex items-center justify-center shadow-sm border border-white"
+    }
+  },
+  "motion_and_interactions": {
+    "entrance": "Staggered fade-up for dashboard widgets and landing page features.",
+    "hover_states": "Cards lift up (-translate-y-1) and shadows intensify.",
+    "micro_interactions": "Soft scaling on buttons, smooth background color transitions.",
+    "accessibility": "Respect prefers-reduced-motion."
+  },
+  "images": {
+    "guidelines": "Use warm, authentic photography of Indian elderly and caregivers. For medical icons, use high-quality 3D renders or sleek abstract geometries. Avoid clinical, cold imagery.",
+    "assets": {
+      "hero_elderly_indian": "https://images.unsplash.com/photo-1774437790863-88a80bca5b29?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzV8MHwxfHNlYXJjaHwyfHxlbGRlcmx5JTIwaW5kaWFuJTIwd29tYW4lMjBzbWlsaW5nfGVufDB8fHx8MTc3NjkyMjU3Nnww&ixlib=rb-4.1.0&q=85",
+      "caregiver_interaction": "https://images.pexels.com/photos/8527647/pexels-photo-8527647.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "healthy_indian_food": "https://images.pexels.com/photos/29148133/pexels-photo-29148133.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "abstract_blue_bg": "https://images.unsplash.com/photo-1760442903561-4c6f5663f163?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzOTB8MHwxfHNlYXJjaHw0fHxsaWdodCUyMGJsdWUlMjBncmFkaWVudCUyMGFic3RyYWN0JTIwYmFja2dyb3VuZHxlbnwwfHx8fDE3NzY5MjI1ODF8MA&ixlib=rb-4.1.0&q=85",
+      "medical_abstract_3d": "https://images.unsplash.com/photo-1720293315574-911411515624?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzV8MHwxfHNlYXJjaHwzfHwzZCUyMG1lZGljYWwlMjBpY29ufGVufDB8fHx8MTc3NjkyMjU4MXww&ixlib=rb-4.1.0&q=85"
+    }
+  },
+  "screens": {
+    "landing_page": {
+      "layout": "Bento Grid Mode A",
+      "elements": [
+        "Hero section with soft blue gradient background and floating glassmorphism stat chips (e.g., '24/7 AI Guidance', 'Daily Voice Summary').",
+        "Large oversized H1 heading.",
+        "Lime green CTA 'Get Fittyfit'.",
+        "Feature bento grid showcasing 3D medical abstract imagery and caregiver photos.",
+        "Testimonials using glass cards."
+      ]
+    },
+    "dashboard": {
+      "layout": "Control Room Grid Mode B, but spaced generously",
+      "elements": [
+        "Greeting 'Good Morning, [Name]' with date and weather.",
+        "Today's Summary Card (span 2 cols) with key metrics.",
+        "Upcoming Medicines List with checkmarks.",
+        "Quick Action grid (Ask AI, Voice Summary, Food Analysis).",
+        "Floating SOS button fixed at bottom-right.",
+        "Cultural/Seasonal tips widget."
+      ]
+    },
+    "food_analysis": {
+      "layout": "Focus Centered",
+      "elements": [
+        "Photo upload area with dashed border and glass bg.",
+        "Result card: Safe/Limit/Avoid badge (Green/Yellow/Red).",
+        "Alternatives suggestions list.",
+        "Medicine interaction warnings with subtle red/orange accents."
+      ]
+    },
+    "voice_health_summary": {
+      "layout": "Minimalist Card",
+      "elements": [
+        "Large Play Button with audio wave animation.",
+        "'Call Me Now' and 'Schedule Daily Call' actions.",
+        "Language selection dropdown (Hindi/English).",
+        "Sample Hindi summary transcription card."
+      ]
+    },
+    "emergency_sos": {
+      "layout": "Full Screen Takeover Alert",
+      "elements": [
+        "Massive red SOS pulse button.",
+        "Emergency contact numbers.",
+        "Quick display of Blood Group, current meds, and location."
+      ]
+    }
+  },
+  "testing": {
+    "attributes": [
+      "data-testid='hero-cta-button'",
+      "data-testid='sos-emergency-button'",
+      "data-testid='login-form-submit'",
+      "data-testid='dashboard-greeting'",
+      "data-testid='food-upload-input'",
+      "data-testid='voice-summary-play'",
+      "data-testid='mark-med-taken'"
+    ]
+  }
+}
