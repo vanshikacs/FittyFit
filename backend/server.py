@@ -499,12 +499,12 @@ async def dashboard(user=Depends(get_current_user)):
 
 app.include_router(api)
 
-origins = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:3001",
-    "http://127.0.0.1:3001",
-]
+cors_env = os.environ.get(
+    "CORS_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
+)
+
+origins = [origin.strip() for origin in cors_env.split(",") if origin.strip()]
 
 app.add_middleware(
     CORSMiddleware,
