@@ -4,34 +4,48 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict, Any
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import os
 import uuid
+import json
+import re
 import logging
 import bcrypt
 import jwt as pyjwt
 import certifi
 
-from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+from groq import Groq
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
+# ---------------- Config ----------------
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret")
 JWT_ALGO = "HS256"
 JWT_EXPIRY_DAYS = 14
 
+TEXT_MODEL = "llama-3.3-70b-versatile"
+VISION_MODEL = "llama-4-scout-17b-16e-instruct"  # Groq vision-capable model
+MAX_HISTORY_MESSAGES = 20  # cap conversation history sent per coach chat call
+
 client = AsyncIOMotorClient(MONGO_URL, tlsCAFile=certifi.where())
 db = client[DB_NAME]
+
+# Single reused Groq client (do not recreate per-request)
+groq_client = Groq(api_key=GROQ_API_KEY)
 
 app = FastAPI(title="Fittyfit API")
 api = APIRouter(prefix="/api")
 bearer = HTTPBearer(auto_error=False)
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logger = logging.getLogger("fittyfit")
+
 
 # ---------------- Models ----------------
 Role = Literal["elder", "caregiver"]
@@ -101,7 +115,7 @@ class SOSIn(BaseModel):
     note: Optional[str] = None
 
 
-# ---------------- Helpers ----------------
+# ---------------- Auth Helpers ----------------
 def hash_password(plain: str) -> str:
     return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
 
@@ -147,6 +161,81 @@ def public_user(user: dict) -> dict:
         "onboarded": user.get("onboarded", False),
         "created_at": user.get("created_at"),
     }
+
+
+# ---------------- Groq Helpers ----------------
+def _safe_error_message(e: Exception) -> str:
+    """Return a short, safe error string. Never leak stack traces, keys, or tokens."""
+    msg = str(e)
+    # strip anything that looks like it could be a key/token
+    msg = re.sub(r"(sk|gsk)_[A-Za-z0-9]+", "[redacted]", msg)
+    return msg[:200]
+
+
+async def groq_text_completion(
+    system_message: str,
+    history: List[Dict[str, str]],
+    user_message: str,
+    temperature: float = 0.6,
+    max_tokens: int = 600,
+) -> str:
+    """
+    Run a Groq chat completion for text-only prompts.
+    `history` is a list of {"role": "user"|"assistant", "content": str} in chronological order.
+    """
+    messages = [{"role": "system", "content": system_message}]
+    messages.extend(history[-MAX_HISTORY_MESSAGES:])
+    messages.append({"role": "user", "content": user_message})
+
+    completion = groq_client.chat.completions.create(
+        model=TEXT_MODEL,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    return completion.choices[0].message.content.strip()
+
+
+async def groq_vision_completion(
+    system_message: str,
+    user_text: str,
+    image_base64: str,
+    temperature: float = 0.4,
+    max_tokens: int = 500,
+) -> str:
+    """Run a Groq vision-capable chat completion with an inline base64 image."""
+    image_url = f"data:image/jpeg;base64,{image_base64}"
+    completion = groq_client.chat.completions.create(
+        model=VISION_MODEL,
+        messages=[
+            {"role": "system", "content": system_message},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_text},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ],
+            },
+        ],
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    return completion.choices[0].message.content.strip()
+
+
+def extract_json_object(raw_text: str) -> Optional[dict]:
+    """Pull the first {...} JSON object out of a raw LLM response, tolerating extra prose."""
+    txt = raw_text.strip()
+    # strip markdown code fences if present
+    txt = re.sub(r"^```(?:json)?\s*", "", txt)
+    txt = re.sub(r"\s*```$", "", txt)
+    m = re.search(r"\{.*\}", txt, re.DOTALL)
+    if m:
+        txt = m.group(0)
+    try:
+        return json.loads(txt)
+    except Exception:
+        return None
 
 
 # ---------------- Routes ----------------
@@ -205,7 +294,6 @@ async def update_profile(profile: HealthProfile, user=Depends(get_current_user))
 @api.get("/medications")
 async def list_meds(user=Depends(get_current_user)):
     meds = await db.medications.find({"user_id": user["id"]}, {"_id": 0}).to_list(200)
-    # compute adherence last 7 days
     since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
     logs = await db.med_logs.find(
         {"user_id": user["id"], "created_at": {"$gte": since}}, {"_id": 0}
@@ -244,7 +332,6 @@ async def log_med(inp: MedLogIn, user=Depends(get_current_user)):
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.med_logs.insert_one(log)
-    # auto-create caregiver alert for missed meds
     if inp.status == "missed":
         med = await db.medications.find_one({"id": inp.medication_id}, {"_id": 0})
         await db.alerts.insert_one({
@@ -282,16 +369,27 @@ def _coach_system(user: dict) -> str:
 @api.post("/coach/chat")
 async def coach_chat(inp: ChatIn, user=Depends(get_current_user)):
     session_id = inp.session_id or str(uuid.uuid4())
+
+    # Rebuild conversation history from stored messages for this session,
+    # so context/memory/personalization persists exactly as before.
+    prior = await db.coach_messages.find(
+        {"user_id": user["id"], "session_id": session_id}, {"_id": 0}
+    ).sort("created_at", 1).to_list(200)
+
+    history: List[Dict[str, str]] = []
+    for m in prior:
+        history.append({"role": "user", "content": m["user_message"]})
+        history.append({"role": "assistant", "content": m["ai_response"]})
+
     try:
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"{user['id']}:{session_id}",
+        reply = await groq_text_completion(
             system_message=_coach_system(user),
-        ).with_model("openai", "gpt-4o")
-        reply = await chat.send_message(UserMessage(text=inp.message))
+            history=history,
+            user_message=inp.message,
+        )
     except Exception as e:
-        logging.exception("coach chat failed")
-        raise HTTPException(status_code=500, detail=f"AI error: {str(e)[:200]}")
+        logger.exception("coach chat failed")
+        raise HTTPException(status_code=500, detail=f"AI error: {_safe_error_message(e)}")
 
     msg_doc = {
         "id": str(uuid.uuid4()),
@@ -333,35 +431,27 @@ def _food_system(user: dict) -> str:
 async def food_analyze(inp: FoodAnalyzeIn, user=Depends(get_current_user)):
     if not inp.image_base64 and not inp.food_name:
         raise HTTPException(status_code=400, detail="Provide image or food_name")
-    try:
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"{user['id']}:food:{uuid.uuid4()}",
-            system_message=_food_system(user),
-        ).with_model("openai", "gpt-4o")
 
+    try:
         if inp.image_base64:
             clean = inp.image_base64.split(",", 1)[1] if "," in inp.image_base64 else inp.image_base64
-            msg = UserMessage(
-                text="Analyze this meal and return strict JSON only.",
-                file_contents=[ImageContent(image_base64=clean)],
+            reply = await groq_vision_completion(
+                system_message=_food_system(user),
+                user_text="Analyze this meal and return strict JSON only.",
+                image_base64=clean,
             )
         else:
-            msg = UserMessage(text=f"Food item: {inp.food_name}. Return strict JSON only.")
-
-        reply = await chat.send_message(msg)
+            reply = await groq_text_completion(
+                system_message=_food_system(user),
+                history=[],
+                user_message=f"Food item: {inp.food_name}. Return strict JSON only.",
+            )
     except Exception as e:
-        logging.exception("food analyze failed")
-        raise HTTPException(status_code=500, detail=f"AI error: {str(e)[:200]}")
+        logger.exception("food analyze failed")
+        raise HTTPException(status_code=500, detail=f"AI error: {_safe_error_message(e)}")
 
-    import json, re
-    txt = reply.strip()
-    m = re.search(r"\{.*\}", txt, re.DOTALL)
-    if m:
-        txt = m.group(0)
-    try:
-        data = json.loads(txt)
-    except Exception:
+    data = extract_json_object(reply)
+    if data is None:
         data = {
             "food_name": inp.food_name or "Unknown",
             "verdict": "limit",
@@ -378,7 +468,7 @@ async def food_analyze(inp: FoodAnalyzeIn, user=Depends(get_current_user)):
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.food_logs.insert_one(record)
-    # alert caregiver if avoid
+
     if data.get("verdict") == "avoid":
         await db.alerts.insert_one({
             "id": str(uuid.uuid4()),
@@ -398,31 +488,33 @@ async def food_analyze(inp: FoodAnalyzeIn, user=Depends(get_current_user)):
 async def voice_summary(user=Depends(get_current_user)):
     p = user.get("profile", {}) or {}
     lang = p.get("language", "English")
-    # fetch upcoming meds today
     meds = await db.medications.find({"user_id": user["id"]}, {"_id": 0}).to_list(20)
     med_names = [m["name"] for m in meds][:3]
+
+    system_message = (
+        f"You write a warm, elder-friendly daily health voice summary for an Indian user in {lang}. "
+        f"4-5 short sentences. Include greeting with their name, medicine reminder, seasonal hydration/weather tip, "
+        f"a cultural/food note, and a caring closing line. If language is Hindi, use Roman Hindi (Hinglish)."
+    )
+    prompt = (
+        f"User: {user['full_name']}. Medicines today: {', '.join(med_names) or 'none logged'}. "
+        f"Conditions: {', '.join(p.get('chronic_conditions', [])) or 'none'}. "
+        f"Write today's summary now."
+    )
+
     try:
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"{user['id']}:voice:{datetime.now().date().isoformat()}",
-            system_message=(
-                f"You write a warm, elder-friendly daily health voice summary for an Indian user in {lang}. "
-                f"4-5 short sentences. Include greeting with their name, medicine reminder, seasonal hydration/weather tip, "
-                f"a cultural/food note, and a caring closing line. If language is Hindi, use Roman Hindi (Hinglish)."
-            ),
-        ).with_model("openai", "gpt-4o")
-        prompt = (
-            f"User: {user['full_name']}. Medicines today: {', '.join(med_names) or 'none logged'}. "
-            f"Conditions: {', '.join(p.get('chronic_conditions', [])) or 'none'}. "
-            f"Write today's summary now."
+        reply = await groq_text_completion(
+            system_message=system_message,
+            history=[],
+            user_message=prompt,
         )
-        reply = await chat.send_message(UserMessage(text=prompt))
     except Exception as e:
         reply = (
             f"Namaste {user['full_name']} ji, aaj aapki dawaai lena na bhoolein. "
             f"Paani zyada piyen, halki walk karein, aur khana samay par khayen. Khayal rakhein."
         )
-        logging.exception("voice summary error: %s", e)
+        logger.exception("voice summary error: %s", _safe_error_message(e))
+
     return {"language": lang, "summary": reply, "date": datetime.now(timezone.utc).date().isoformat()}
 
 
@@ -503,7 +595,6 @@ cors_env = os.environ.get(
     "CORS_ORIGINS",
     "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
 )
-
 origins = [origin.strip() for origin in cors_env.split(",") if origin.strip()]
 
 app.add_middleware(
@@ -513,9 +604,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-logger = logging.getLogger("fittyfit")
 
 
 @app.on_event("shutdown")
