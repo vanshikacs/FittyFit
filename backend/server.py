@@ -30,7 +30,7 @@ JWT_ALGO = "HS256"
 JWT_EXPIRY_DAYS = 14
 
 TEXT_MODEL = "llama-3.3-70b-versatile"
-VISION_MODEL = "llama-4-scout-17b-16e-instruct"  # Groq vision-capable model
+VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"  # Groq vision-capable model
 MAX_HISTORY_MESSAGES = 20  # cap conversation history sent per coach chat call
 
 client = AsyncIOMotorClient(MONGO_URL, tlsCAFile=certifi.where())
@@ -223,19 +223,124 @@ async def groq_vision_completion(
     return completion.choices[0].message.content.strip()
 
 
+def _extract_braced_json(raw_text: str) -> Optional[str]:
+    """Extract the first complete {...} JSON object via brace matching."""
+    txt = raw_text.strip()
+    txt = re.sub(r"^```(?:json)?\s*", "", txt)
+    txt = re.sub(r"\s*```$", "", txt)
+
+    start = txt.find("{")
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+
+    for i in range(start, len(txt)):
+        ch = txt[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                # slice spaces preserved for valid json formatting
+                return txt[start : i + 1]
+
+    return None
+
+
 def extract_json_object(raw_text: str) -> Optional[dict]:
     """Pull the first {...} JSON object out of a raw LLM response, tolerating extra prose."""
+    # Fast path: brace matching (more reliable than greedy regex)
+    candidate = _extract_braced_json(raw_text)
+    if candidate:
+        try:
+            return json.loads(candidate)
+        except Exception:
+            pass
+
+    # Fallback: original greedy regex approach
     txt = raw_text.strip()
-    # strip markdown code fences if present
     txt = re.sub(r"^```(?:json)?\s*", "", txt)
     txt = re.sub(r"\s*```$", "", txt)
     m = re.search(r"\{.*\}", txt, re.DOTALL)
     if m:
         txt = m.group(0)
-    try:
-        return json.loads(txt)
-    except Exception:
-        return None
+        try:
+            return json.loads(txt)
+        except Exception:
+            return None
+
+    return None
+
+
+def _normalize_food_analysis(
+    data: Optional[dict],
+    default_food_name: str,
+    fallback_raw_reply: Optional[str] = None,
+) -> dict:
+    """Ensure the response always matches the frontend contract."""
+
+    normalized = {
+        "food_name": default_food_name or "Unknown",
+        "verdict": "limit",
+        "reason": "",
+        "medicine_interaction": "",
+        "seasonal_note": "",
+        "alternatives": [],
+    }
+
+    if not isinstance(data, dict):
+        # Include some of the raw reply for debugging/user context.
+        raw = (fallback_raw_reply or "").strip()
+        normalized["reason"] = (raw[:200] if raw else "Unable to analyze right now.")
+        return normalized
+
+    # food_name
+    if isinstance(data.get("food_name"), str) and data.get("food_name").strip():
+        normalized["food_name"] = data["food_name"].strip()
+
+    # verdict
+    verdict = data.get("verdict")
+    if verdict in ("safe", "limit", "avoid"):
+        normalized["verdict"] = verdict
+
+    # text fields
+    for k in ("reason", "medicine_interaction", "seasonal_note"):
+        v = data.get(k)
+        if isinstance(v, str):
+            normalized[k] = v.strip()
+
+    # Cap reason to ~30 words (LLM might violate)
+    if normalized["reason"]:
+        words = normalized["reason"].split()
+        normalized["reason"] = " ".join(words[:30]).strip()
+
+    # alternatives: must be [str,str,str]
+    alts = data.get("alternatives")
+    indian_defaults = ["Curd rice", "Vegetable khichdi", "Moong dal chilla"]
+    if isinstance(alts, list):
+        cleaned = [a.strip() for a in alts if isinstance(a, str) and a.strip()]
+        cleaned = cleaned[:3]
+        # pad if fewer than 3
+        while len(cleaned) < 3:
+            cleaned.append(indian_defaults[len(cleaned) % len(indian_defaults)])
+        normalized["alternatives"] = cleaned
+
+    return normalized
 
 
 # ---------------- Routes ----------------
@@ -450,37 +555,33 @@ async def food_analyze(inp: FoodAnalyzeIn, user=Depends(get_current_user)):
         logger.exception("food analyze failed")
         raise HTTPException(status_code=500, detail=f"AI error: {_safe_error_message(e)}")
 
-    data = extract_json_object(reply)
-    if data is None:
-        data = {
-            "food_name": inp.food_name or "Unknown",
-            "verdict": "limit",
-            "reason": reply[:200],
-            "medicine_interaction": "",
-            "seasonal_note": "",
-            "alternatives": [],
-        }
+    raw_data = extract_json_object(reply)
+    normalized = _normalize_food_analysis(
+        raw_data,
+        default_food_name=inp.food_name or "Unknown",
+        fallback_raw_reply=reply,
+    )
 
     record = {
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
-        "result": data,
+        "result": normalized,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.food_logs.insert_one(record)
 
-    if data.get("verdict") == "avoid":
+    if normalized.get("verdict") == "avoid":
         await db.alerts.insert_one({
             "id": str(uuid.uuid4()),
             "user_id": user["id"],
             "type": "risky_food",
             "priority": "medium",
             "title": "Risky food choice",
-            "message": f"{user['full_name']} scanned '{data.get('food_name')}' flagged as avoid.",
+            "message": f"{user['full_name']} scanned '{normalized.get('food_name')}' flagged as avoid.",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "read": False,
         })
-    return data
+    return normalized
 
 
 # ---------------- Voice Summary ----------------
