@@ -1,6 +1,8 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
+from dotenv import dotenv_values
+
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
@@ -19,15 +21,42 @@ import certifi
 from groq import Groq
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / ".env")
+# Ensure backend env is loaded reliably from backend/.env
+ENV_PATH = ROOT_DIR / ".env"
+
+# 1) Attempt normal dotenv load
+load_dotenv(ENV_PATH)
+
+# 2) Deterministic fallback: read values and set os.environ explicitly
+if ENV_PATH.exists():
+    vals = dotenv_values(str(ENV_PATH)) or {}
+    for k, v in vals.items():
+        # Keep existing env values if already set
+        if v is not None and not os.environ.get(k):
+            os.environ[k] = str(v)
+
 
 # ---------------- Config ----------------
+missing_env = []
+for k in ("MONGO_URL", "DB_NAME", "GROQ_API_KEY"):
+    if not os.environ.get(k):
+        missing_env.append(k)
+
+if missing_env:
+    raise RuntimeError(
+        "Missing required environment variables: "
+        + ", ".join(missing_env)
+        + ". Set them in backend/.env or environment before starting the backend."
+    )
+
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
+
 JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret")
 JWT_ALGO = "HS256"
 JWT_EXPIRY_DAYS = 14
+
 
 TEXT_MODEL = "llama-3.3-70b-versatile"
 VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"  # Groq vision-capable model
